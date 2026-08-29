@@ -6,7 +6,7 @@ class GeneratorDialog(QDialog):
     def __init__(self, parent=None, target_sight_names=None):
         super().__init__(parent)
         self.main_window = parent
-        self.setWindowTitle("Мастер генерации превью")
+        self.setWindowTitle("Preview Generation Wizard")
         self.setFixedSize(400, 150)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         
@@ -28,7 +28,7 @@ class GeneratorDialog(QDialog):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(12)
         
-        self.lbl_status = QLabel("Подготовка к фоновой генерации картинок...")
+        self.lbl_status = QLabel("Preparing for background image generation...")
         self.lbl_status.setStyleSheet("color: #BBBBBB; font-size: 11px;")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
@@ -43,7 +43,7 @@ class GeneratorDialog(QDialog):
         
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        self.btn_cancel = QPushButton("Отмена")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setFixedSize(90, 28)
         self.btn_cancel.clicked.connect(self.on_cancel_clicked)
         btn_layout.addWidget(self.btn_cancel)
@@ -58,11 +58,19 @@ class GeneratorDialog(QDialog):
         self.worker.wait()
         
         if count > 0:
-            QMessageBox.information(self, "Успех", f"Генерация завершена!\nСоздано векторных превью: {count} шт.")
-            if self.main_window and hasattr(self.main_window, 'refresh_all_apps_data'):
-                self.main_window.refresh_all_apps_data()
+            QMessageBox.information(self, "Success", f"The generation is complete!\nCreated vector previews: {count}")
+            
+            if self.main_window:
+                from src.models.storage import rebuild_sights_cache, get_all_sights
+                rebuild_sights_cache()
+                self.main_window.sights_cache_memory = get_all_sights()
+                
+                if hasattr(self.main_window, 'refresh_repository_ui'):
+                    self.main_window.refresh_repository_ui()
+                if hasattr(self.main_window, 'on_repo_selection_changed'):
+                    self.main_window.on_repo_selection_changed()
         else:
-            QMessageBox.information(self, "Информация", "Нет прицелов требующих генерации превью.")
+            QMessageBox.information(self, "nformation", "There are no sights that require preview generation.")
             
         self.accept()
 

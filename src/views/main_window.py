@@ -1,7 +1,10 @@
 import os
+import json
+import shutil
+import sys
 from PyQt6.QtWidgets import QMainWindow, QListWidget, QListWidgetItem, QMessageBox, QInputDialog, QFrame, QVBoxLayout, QLabel, QWidget, QHBoxLayout
 from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6 import uic
 
 from src.models.settings import load_settings, choose_game_directory
@@ -9,18 +12,70 @@ from src.models.storage import init_app_folders, get_all_sights, rebuild_sights_
 from src.models.groups import init_groups_folder, create_new_group
 from src.views.group_card import GroupCard
 
+def get_asset_path(relative_path):
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, os.path.basename(relative_path))
+        if relative_path.endswith('.ico'):
+            return os.path.basename(relative_path)
+        return os.path.join("src", "views", "assets", os.path.basename(relative_path))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         init_app_folders()
         init_groups_folder()
         
-        ui_path = os.path.join("src", "views", "assets", "MainWindow.ui")
+        ui_path = get_asset_path("MainWindow.ui")
         uic.loadUi(ui_path, self)
+
+        self.setWindowTitle("War Thunder Sight Manager v0.8")
+
+        css_path = get_asset_path("style.css")
+        if os.path.exists(css_path):
+            try:
+                with open(css_path, "r", encoding="utf-8") as f:
+                    self.setStyleSheet(f.read())
+            except Exception as e:
+                print(f"Warning loading styles: {e}")
+
+        self.hover_zoom_label = QLabel(self)
+        self.hover_zoom_label.setStyleSheet("""
+            QLabel { 
+                background-color: #1A1A1A; 
+                border: 2px solid #007ACC; 
+                border-radius: 8px; 
+                padding: 10px;
+            }
+        """)
+        self.hover_zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.hover_zoom_label.hide()
+        
+        import ctypes
+        try:
+            set_window_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+            window_handle = int(self.winId())
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            dark_mode_flag = ctypes.c_int(1)
+            set_window_attribute(window_handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(dark_mode_flag), ctypes.sizeof(dark_mode_flag))
+            
+            DWMWA_CAPTION_COLOR = 35
+            custom_color = ctypes.c_int(0x00161616) 
+            set_window_attribute(window_handle, DWMWA_CAPTION_COLOR, ctypes.byref(custom_color), ctypes.sizeof(custom_color))
+        except Exception as e:
+            print(f"Warning [WinApi]: {e}")
+            
+        icon_path = get_asset_path("icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         game_path = load_settings()
         if hasattr(self, 'input_game_path') and game_path:
             self.input_game_path.setText(str(game_path))
+            
+            from src.models.storage import REPOSITORY_DIR
+            from src.models.game_sync import migrate_existing_sights_from_game
+            migrate_existing_sights_from_game(str(game_path), REPOSITORY_DIR)
             
         self.init_signals()
         self.setup_list_widgets()
@@ -32,24 +87,38 @@ class MainWindow(QMainWindow):
         self.run_silent_auto_generation()
 
     def run_silent_auto_generation(self):
+        from PyQt6.QtWidgets import QDialog
+        active_modal_widget = self.application().activeModalWidget() if hasattr(self, 'application') else None
+        
+        if isinstance(active_modal_widget, QDialog) or self.findChild(QDialog):
+            print("[DISPATCHER]: An open generation wizard window has been detected. The hidden stream is blocked.")
+            return
 
         from src.models.generator_worker import GeneratorWorker
         
-
+        if hasattr(self, 'auto_generator_worker') and self.auto_generator_worker is not None:
+            if self.auto_generator_worker.isRunning():
+                print("[DISPATCHER]: The old flow is still running. We’re shutting it down.")
+                self.auto_generator_worker.stop()
+                self.auto_generator_worker.wait()
+                print("[DISPATCHER]: The old stream has been stopped. We are preparing a restart.")
+        
         self.auto_generator_worker = GeneratorWorker()
-        
         self.auto_generator_worker.finished_success.connect(self.on_auto_generation_finished)
-        
         self.auto_generator_worker.start()
-
+        
     def on_auto_generation_finished(self, count):
-
-        if hasattr(self, 'auto_generator_worker'):
+        if hasattr(self, 'auto_generator_worker') and self.auto_generator_worker is not None:
             self.auto_generator_worker.wait()
+            self.auto_generator_worker = None 
             
         if count > 0:
-            print(f"[АВТО-ГЕНЕРАТОР]: Успешно создано {count} новых превью-картинок для прицелов!")
-            self.refresh_all_apps_data()
+            print(f"[AUTO-GENERATOR]: Successfully added {count} new preview images.")
+            
+            from src.models.storage import rebuild_sights_cache, get_all_sights
+            rebuild_sights_cache()
+            self.sights_cache_memory = get_all_sights()
+            self.refresh_repository_ui()
 
     def setup_list_widgets(self):
         if hasattr(self, 'repo_list'):
@@ -68,6 +137,8 @@ class MainWindow(QMainWindow):
                 widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
                 widget.verticalScrollBar().setSingleStep(15)
 
+    
+
     def init_signals(self):
         if hasattr(self, 'btn_browse_path'): self.btn_browse_path.clicked.connect(self.on_browse_clicked)
         if hasattr(self, 'btn_refresh'): self.btn_refresh.clicked.connect(self.refresh_all_apps_data)
@@ -85,7 +156,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'input_search_in_groups'):
             self.input_search_in_groups.textChanged.connect(self.filter_groups_by_global_search)
             connected = True
-            print("Сигнал input_search_in_groups успешно привязан по имени объекта!")
             
         if not connected:
             from PyQt6.QtWidgets import QLineEdit
@@ -96,18 +166,31 @@ class MainWindow(QMainWindow):
                     inp.textChanged.connect(self.filter_groups_by_global_search)
                     self.input_search_in_groups = inp
                     connected = True
-                    print(f"Сигнал глобального поиска принудительно привязан к виджету: '{inp.objectName()}'")
                     break
                     
-        if not connected:
-            print("Предупреждение: Текстовое поле глобального поиска групп не найдено на форме MainWindow.ui!")
 
     def on_browse_clicked(self):
         new_path = choose_game_directory(self)
-        if new_path: self.input_game_path.setText(new_path)
+        if new_path:
+            self.input_game_path.setText(new_path)
+            
+            from src.models.storage import REPOSITORY_DIR
+            from src.models.game_sync import migrate_existing_sights_from_game
+            
+            migrated = migrate_existing_sights_from_game(new_path, REPOSITORY_DIR)
+            
+            self.refresh_all_apps_data()
+            
+            self.run_silent_auto_generation()
+            
+            if migrated > 0:
+                QMessageBox.information(
+                    self, 
+                    "Successful import", 
+                    f"Old files found in the game!\nSuccessfully transferred to the Storage: {migrated}"
+                )
 
     def refresh_all_apps_data(self):
-        print("Полная синхронизация...")
         rebuild_sights_cache()
         
         self.sights_cache_memory = get_all_sights()
@@ -120,7 +203,6 @@ class MainWindow(QMainWindow):
         self.refresh_activated_ui()
         if hasattr(self, 'widget_edit_panel') and self.widget_edit_panel.isVisible():
             self.refresh_edit_dialog_ui()
-        print("Все разделы синхронизированы!")
 
     def refresh_repository_ui(self):
         if not hasattr(self, 'repo_list'): return
@@ -134,6 +216,13 @@ class MainWindow(QMainWindow):
             active_files_in_game = []
             
         sights_data = getattr(self, 'sights_cache_memory', [])
+        existing_repo_names = [sight["file_name"] for sight in sights_data]
+        
+        from src.models.game_sync import remove_sight_link_from_game
+        for file_in_game in active_files_in_game:
+            if file_in_game not in existing_repo_names:
+                if remove_sight_link_from_game(file_in_game, game_path):
+                    print(f"[CLEANING]: The dead label has been automatically removed from the game: {file_in_game}")
         
         for sight in sights_data:
             name = sight["file_name"]
@@ -256,20 +345,23 @@ class MainWindow(QMainWindow):
 
     def render_gallery_waterfall(self, source_list_widget, target_preview_list):
         target_preview_list.clear()
-        
         sight_names_to_render = []
-
+        
         if source_list_widget and hasattr(source_list_widget, 'selectedItems'):
             selected_items = source_list_widget.selectedItems()
-            for item in selected_items:
+            
+            for item in selected_items[:50]:
                 name = item.data(Qt.ItemDataRole.UserRole)
-                if name:
+                if name: 
                     sight_names_to_render.append(name)
                     
         if not sight_names_to_render: 
             return
             
         sights_cache = getattr(self, 'sights_cache_memory', [])
+        for sight_name in sight_names_to_render:
+            sight_data = next((s for s in sights_cache if s["file_name"] == sight_name), None)
+            if not sight_data: continue
         
         for sight_name in sight_names_to_render:
             sight_data = next((s for s in sights_cache if s["file_name"] == sight_name), None)
@@ -287,28 +379,31 @@ class MainWindow(QMainWindow):
             box_layout.addWidget(title_lbl)
             
             has_images = False
-            has_images = False
             if sight_data.get("has_images", False):
                 sight_name_no_ext = os.path.splitext(sight_name)[0].strip()
-                images_dir = os.path.join("data", "SightsImages", sight_name_no_ext)
+                
+                from src.models.storage import IMAGES_DIR
+                images_dir = os.path.join(IMAGES_DIR, sight_name_no_ext)
                 
                 if os.path.exists(images_dir) and os.path.isdir(images_dir):
-                    valid_exts = ('.png', '.jpg', '.jpeg')
-                    img_files = [f for f in os.listdir(images_dir) if f.lower().endswith(valid_exts)]
-                    img_files.sort()
-                    for f in img_files:
-                        img_path = os.path.join(images_dir, f)
-                        img_label = QLabel()
-                        img_label.setStyleSheet("background: transparent; border: none; border-radius: 4px;")
-                        pixmap = QPixmap(img_path)
-                        if pixmap.isNull(): continue
+                    preview_file_path = os.path.join(images_dir, "preview.png")
+                    full_file_path = os.path.join(images_dir, "full.png")
+                    
+                    if os.path.exists(preview_file_path):
+                        # ЖЕЛЕЗНЫЙ ФИКС: Передаем прямое 'self' вместо self.window() или get_asset_path!
+                        # В этой точке self — это 100% наше главное окно со всеми переменными!
+                        img_label = HoverLabel(full_file_path, self)
                         
-                        target_width = 260
-                        scaled = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
-                        img_label.setPixmap(scaled)
-                        img_label.setFixedSize(target_width, scaled.height())
-                        box_layout.addWidget(img_label)
-                        has_images = True
+                        # Отрисовка маленького превью на витрину водопада
+                        pixmap = QPixmap(preview_file_path)
+                        if not pixmap.isNull():
+                            target_width = 260
+                            scaled = pixmap.scaledToWidth(target_width, Qt.TransformationMode.SmoothTransformation)
+                            img_label.setPixmap(scaled)
+                            img_label.setFixedSize(target_width, scaled.height())
+                            box_layout.addWidget(img_label)
+                            has_images = True
+
             if not has_images:
                 no_img = QLabel("No preview images for this sight.")
                 no_img.setStyleSheet("color: #555555; font-style: italic; border: none; background: transparent;")
@@ -424,7 +519,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'active_list'): return
         selected_items = self.active_list.selectedItems()
         if not selected_items:
-            print("Менеджер: Не выбраны прицелы для деактивации.")
+            print("[MANAGER]: No sights have been selected for deactivation.")
             return
             
         game_path = self.input_game_path.text().strip() if hasattr(self, 'input_game_path') else ""
@@ -441,7 +536,7 @@ class MainWindow(QMainWindow):
             if not sight_name: continue
             
             if remove_sight_link_from_game(sight_name, game_path):
-                print(f"Стерта символьная ссылка из игры: {sight_name}")
+                print(f"The symbolic link from the game has been erased: {sight_name}")
                 
                 sight = next((s for s in sights_cache if s["file_name"] == sight_name), None)
                 if sight:
@@ -457,21 +552,38 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'repo_list'): return
         selected_items = self.repo_list.selectedItems()
         if not selected_items: return
+        
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Confirm Delete")
-        msg_box.setText(f"Delete selected sights ({len(selected_items)} pcs)?")
+        msg_box.setText(f"Delete selected sights ({len(selected_items)} pcs)?\nThis will also remove their links from the game.")
         msg_box.setIcon(QMessageBox.Icon.Warning)
         delete_btn = msg_box.addButton("Delete", QMessageBox.ButtonRole.AcceptRole)
         cancel_btn = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         msg_box.exec()
+        
         if msg_box.clickedButton() == delete_btn:
+            game_path = self.input_game_path.text().strip() if hasattr(self, 'input_game_path') else ""
             sights_cache = getattr(self, 'sights_cache_memory', [])
+            from src.models.game_sync import remove_sight_link_from_game
+            
             for item in selected_items:
                 sight_name = item.data(Qt.ItemDataRole.UserRole)
                 sight = next((s for s in sights_cache if s["file_name"] == sight_name), None)
-                if sight and os.path.exists(sight["full_path"]):
-                    try: os.remove(sight["full_path"])
-                    except: pass
+                
+                if sight:
+                    remove_sight_link_from_game(sight_name, game_path)
+                    
+                    if os.path.exists(sight["full_path"]):
+                        try: os.remove(sight["full_path"])
+                        except: pass
+                        
+                    sight_name_no_ext = os.path.splitext(sight_name)[0].strip()
+                    
+                    images_dir = os.path.join("data", "SightsImages", sight_name_no_ext)
+                    if os.path.exists(images_dir) and os.path.isdir(images_dir):
+                        try: shutil.rmtree(images_dir)
+                        except: pass
+                        
             self.refresh_all_apps_data()
 
     def on_create_group_clicked(self):
@@ -482,7 +594,7 @@ class MainWindow(QMainWindow):
 
     def on_edit_group_clicked(self, group_name):
         self.current_editing_group = group_name
-        print(f"Встроенное редактирование группы: {group_name}")
+        print(f"Integrated group editing: {group_name}")
         if hasattr(self, 'widget_edit_panel'): self.widget_edit_panel.show()
         self.refresh_edit_dialog_ui()
 
@@ -612,14 +724,103 @@ class MainWindow(QMainWindow):
         
         selected_items = self.repo_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Внимание", "Выделите хотя бы один прицел в списке для регенерации картинок!")
+            QMessageBox.warning(self, "Attention!", "Select at least one target in the list to regenerate the images!")
             return
             
         selected_sight_names = [item.data(Qt.ItemDataRole.UserRole) for item in selected_items if item.data(Qt.ItemDataRole.UserRole)]
         
         from src.views.generator_dialog import GeneratorDialog
         
+        if hasattr(self, 'auto_generator_worker') and self.auto_generator_worker is not None:
+            if self.auto_generator_worker.isRunning():
+                self.auto_generator_worker.stop()
+                self.auto_generator_worker.wait()
+
         dialog = GeneratorDialog(self, target_sight_names=selected_sight_names)
         dialog.exec()
         
+        from src.models.storage import rebuild_sights_cache, get_all_sights
+        rebuild_sights_cache()
+        self.sights_cache_memory = get_all_sights()
+        
+        self.refresh_repository_ui()
         self.on_repo_selection_changed()
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        dropped_paths = []
+        for url in event.mimeData().urls():
+            local_path = url.toLocalFile()
+            if local_path:
+                dropped_paths.append(local_path)
+                
+        if not dropped_paths:
+            return
+
+        print(f"[Drag-and-Drop]: We caught a bunch of files/archives in the amount of: {len(dropped_paths)}")
+        
+        from src.models.storage import REPOSITORY_DIR
+        from src.models.zip_extractor import process_dropped_files
+        
+        imported_count = process_dropped_files(dropped_paths, REPOSITORY_DIR)
+        
+        if imported_count > 0:
+            self.refresh_all_apps_data()
+            
+            self.run_silent_auto_generation()
+
+            QMessageBox.information(
+                self, 
+                "Import completed successfully", 
+                f"New sights have been successfully added to the Storage: {imported_count}"
+            )
+
+class HoverLabel(QLabel):
+    def __init__(self, full_size_path, main_win):
+        super().__init__()
+        self.full_size_path = full_size_path  # Чистый внешний путь к full.png
+        self.main_win = main_win
+        self.setStyleSheet("background: transparent; border: none; border-radius: 4px;")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+            
+            # Теперь, когда класс лежит ниже MainWindow, проверка намертво увидит hover_zoom_label!
+        if not self.main_win or not hasattr(self.main_win, 'hover_zoom_label'): 
+            print("⚠️ [ЛУПА]: Критическая ошибка: hover_zoom_label не найден в главном окне!")
+            return
+            
+        absolute_full_path = os.path.abspath(self.full_size_path)
+        full_pixmap = QPixmap(absolute_full_path)
+        if full_pixmap.isNull(): return
+            
+        left_panel_w = 450
+        if hasattr(self.main_win, 'repo_list'):
+            left_panel_w = self.main_win.repo_list.width()
+        elif hasattr(self.main_win, 'input_search'):
+            left_panel_w = self.main_win.input_search.width()
+            
+        target_w = left_panel_w - 20
+        if target_w < 200: target_w = 200
+            
+        scaled_pixmap = full_pixmap.scaledToWidth(target_w, Qt.TransformationMode.SmoothTransformation)
+            
+        self.main_win.hover_zoom_label.setPixmap(scaled_pixmap)
+        self.main_win.hover_zoom_label.setFixedSize(scaled_pixmap.width() + 16, scaled_pixmap.height() + 16)
+            
+        win_h = self.main_win.height()
+        target_x = 12 
+        target_y = (win_h - self.main_win.hover_zoom_label.height()) // 2
+            
+        self.main_win.hover_zoom_label.move(target_x, target_y)
+        self.main_win.hover_zoom_label.raise_()
+        self.main_win.hover_zoom_label.show()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        if self.main_win and hasattr(self.main_win, 'hover_zoom_label'):
+            self.main_win.hover_zoom_label.hide()

@@ -31,5 +31,34 @@ def remove_sight_link_from_game(sight_name, game_path):
             os.remove(target_path) 
             return True
     except Exception as e:
-        print(f"Ошибка при удалении симлинка {sight_name}: {e}")
+        print(f"Error deleting the symlink {sight_name}: {e}")
     return False
+
+def migrate_existing_sights_from_game(game_path, target_repo_dir):
+    if not game_path or not os.path.exists(game_path):
+        return 0
+
+    from src.models.game_sync import create_sight_symlink
+    migrated_count = 0
+
+    try:
+        for file_name in os.listdir(game_path):
+            if file_name.lower().endswith('.blk'):
+                file_in_game = os.path.join(game_path, file_name)
+                
+                if not os.path.islink(file_in_game):
+                    dest_repo_path = os.path.join(target_repo_dir, file_name)
+                    
+                    if not os.path.exists(dest_repo_path):
+                        shutil.move(file_in_game, dest_repo_path)
+                    else:
+                        try: os.remove(file_in_game)
+                        except: pass
+                        
+                    create_sight_symlink(file_name, os.path.abspath(dest_repo_path), game_path)
+                    migrated_count += 1
+                    
+    except Exception as e:
+        print(f"Error during the migration of sights from the game: {e}")
+
+    return migrated_count

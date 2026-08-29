@@ -21,17 +21,17 @@ class GeneratorWorker(QThread):
         all_sights = get_all_sights()
         
         if self.target_sight_names is not None:
-            self.status_updated.emit(f"Подготовка к перегенерации выделенных прицелов ({len(self.target_sight_names)} шт.)...")
+            self.status_updated.emit(f"Preparation for the regeneration of allocated sights ({len(self.target_sight_names)})...")
             sights_to_generate = [s for s in all_sights if s["file_name"] in self.target_sight_names]
         else:
-            self.status_updated.emit("Авто-проверка отсутствующих превью-картинок...")
+            self.status_updated.emit("Auto‑check for missing image previews...")
             sights_to_generate = [s for s in all_sights if not s.get("has_images", False)]
         
         total_tasks = len(sights_to_generate)
         self.progress_max_set.emit(total_tasks)
         
         if total_tasks == 0:
-            self.status_updated.emit("Нет прицелов для обработки.")
+            self.status_updated.emit("There are no sights for processing.")
             self.finished_success.emit(0)
             return
 
@@ -39,7 +39,7 @@ class GeneratorWorker(QThread):
         
         for idx, sight in enumerate(sights_to_generate):
             if not self.is_running:
-                self.status_updated.emit("Процесс принудительно остановлен.")
+                self.status_updated.emit("The process has been forcibly stopped.")
                 break
                 
             blk_name = sight["file_name"]
@@ -48,12 +48,14 @@ class GeneratorWorker(QThread):
             self.status_updated.emit(f"Перерисовка векторной сетки: {blk_name}...")
             
             sight_name_no_ext = os.path.splitext(blk_name)[0].strip()
-            output_png_path = os.path.join("data", "SightsImages", sight_name_no_ext, "preview.png")
             
-            success, msg = parse_and_render_blk(blk_path, output_png_path)
+            from src.models.storage import IMAGES_DIR
+            output_dir_path = os.path.join(IMAGES_DIR, sight_name_no_ext)
+            
+            success, msg = parse_and_render_blk(blk_path, output_dir_path)
             if success:
                 generated_count += 1
             
         if self.is_running:
-            self.status_updated.emit(f"Успешно обработано прицелов: {generated_count}")
+            self.status_updated.emit(f"The sights have been successfully processed: {generated_count}")
             self.finished_success.emit(generated_count)
