@@ -25,14 +25,14 @@ class SightCard(QFrame):
         layout.setSpacing(6)
         
 
-        status_icon = "🟢 " if self.sight_data.get("is_activated", False) else "📄 "
+        status_icon = "🟢 " if self.sight_data.get("is_activated", False) else "⚪ "
         self.name_label = QLabel(f"{status_icon}{self.sight_data['file_name']}")
         self.name_label.setStyleSheet("font-weight: 500; color: #E0E0E0; background: transparent; border: none; font-size: 12px;")
         layout.addWidget(self.name_label)
 
         
         if self.sight_data.get("has_images", False):
-            self.img_icon = QLabel("🖼️")
+            self.img_icon = QLabel("pic")
             self.img_icon.setStyleSheet("background: transparent; border: none; font-size: 11px;")
             layout.addStretch()
             layout.addWidget(self.img_icon)

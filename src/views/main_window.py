@@ -2,7 +2,7 @@ import os
 import json
 import shutil
 import sys
-from PyQt6.QtWidgets import QMainWindow, QListWidget, QListWidgetItem, QMessageBox, QInputDialog, QFrame, QVBoxLayout, QLabel, QWidget, QHBoxLayout
+from PyQt6.QtWidgets import QMainWindow, QListWidget, QListWidgetItem, QMessageBox, QInputDialog, QFrame, QVBoxLayout, QLabel, QWidget, QHBoxLayout, QPushButton
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6 import uic
@@ -24,10 +24,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         init_app_folders()
-        init_groups_folder()
+
+        #init_groups_folder()
         
         ui_path = get_asset_path("MainWindow.ui")
         uic.loadUi(ui_path, self)
+
+        if hasattr(self, 'tabWidget'):
+            self.tabWidget.removeTab(1)
 
         self.setWindowTitle("War Thunder Sight Manager v0.8")
 
@@ -86,6 +90,13 @@ class MainWindow(QMainWindow):
 
         self.run_silent_auto_generation()
 
+        for list_widget in ['repo_list', 'active_list']:
+            widget = getattr(self, list_widget, None)
+            if widget:
+                widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+                widget.customContextMenuRequested.connect(self.open_universal_context_menu)
+
+
     def run_silent_auto_generation(self):
         from PyQt6.QtWidgets import QDialog
         active_modal_widget = self.application().activeModalWidget() if hasattr(self, 'application') else None
@@ -140,12 +151,15 @@ class MainWindow(QMainWindow):
     
 
     def init_signals(self):
+
         if hasattr(self, 'btn_browse_path'): self.btn_browse_path.clicked.connect(self.on_browse_clicked)
         if hasattr(self, 'btn_refresh'): self.btn_refresh.clicked.connect(self.refresh_all_apps_data)
         if hasattr(self, 'input_search'): self.input_search.textChanged.connect(self.filter_repository)
-        if hasattr(self, 'check_hide_grouped'): self.check_hide_grouped.stateChanged.connect(self.filter_repository)
+        if hasattr(self, 'hide_activated_sights'): self.hide_activated_sights.toggled.connect(self.refresh_repository_ui)
         if hasattr(self, 'btn_select_all'): self.btn_select_all.clicked.connect(self.select_all_sights)
+        if hasattr(self, 'btn_active_select_all'): self.btn_active_select_all.clicked.connect(self.select_all_sights_in_activated)
         if hasattr(self, 'btn_clear_select'): self.btn_clear_select.clicked.connect(self.clear_sights_selection)
+        if hasattr(self, 'btn_active_clear_select'): self.btn_active_clear_select.clicked.connect(self.clear_sights_selection_in_active)
         if hasattr(self, 'btn_activate'): self.btn_activate.clicked.connect(self.activate_selected_sights)
         if hasattr(self, 'btn_delete'): self.btn_delete.clicked.connect(self.delete_selected_sights)
         if hasattr(self, 'btn_group_create_new'): self.btn_group_create_new.clicked.connect(self.on_create_group_clicked)
@@ -199,71 +213,45 @@ class MainWindow(QMainWindow):
             self.label_total_sights_counter.setText(f"Total Sights inside Repository: {len(self.sights_cache_memory)}")
             
         self.refresh_repository_ui()
-        self.refresh_groups_ui()
         self.refresh_activated_ui()
         if hasattr(self, 'widget_edit_panel') and self.widget_edit_panel.isVisible():
             self.refresh_edit_dialog_ui()
 
     def refresh_repository_ui(self):
+        """Выводит прицелы Хранилища с учетом фильтра скрытия активированных"""
         if not hasattr(self, 'repo_list'): return
         self.repo_list.clear()
         
         game_path = self.input_game_path.text().strip() if hasattr(self, 'input_game_path') else ""
-        
         try:
             active_files_in_game = [f for f in os.listdir(game_path) if f.lower().endswith('.blk')] if (game_path and os.path.exists(game_path)) else []
         except:
             active_files_in_game = []
             
         sights_data = getattr(self, 'sights_cache_memory', [])
-        existing_repo_names = [sight["file_name"] for sight in sights_data]
         
-        from src.models.game_sync import remove_sight_link_from_game
-        for file_in_game in active_files_in_game:
-            if file_in_game not in existing_repo_names:
-                if remove_sight_link_from_game(file_in_game, game_path):
-                    print(f"[CLEANING]: The dead label has been automatically removed from the game: {file_in_game}")
+        # ТВОЁ ТЗ: Проверяем, взведен ли флаг "Скрывать активированные"
+        should_hide_active = self.hide_activated_sights.isChecked() if hasattr(self, 'hide_activated_sights') else False
         
         for sight in sights_data:
             name = sight["file_name"]
             
+            # Определяем статус активации прицела
             if name in active_files_in_game:
                 sight["is_activated"] = True
+                # Если флаг включен — просто МОЛЧА пропускаем этот прицел, не выводя на экран!
+                if should_hide_active:
+                    continue
                 icon = "🟢 "
             else:
                 sight["is_activated"] = False
-                icon = "📄 "
+                icon = "⚪ "
                 
-            img_marker = "  [🖼️]" if sight.get("has_images", False) else ""
+            img_marker = "  [pic]" if sight.get("has_images", False) else ""
             item = QListWidgetItem(f"{icon}{name}{img_marker}")
             item.setData(Qt.ItemDataRole.UserRole, name)
             self.repo_list.addItem(item)
 
-    def refresh_groups_ui(self):
-        target_list = getattr(self, 'groups_list', None)
-        if target_list is None or target_list.__class__.__name__ != "QListWidget":
-            for l in self.findChildren(QListWidget):
-                if l.objectName() not in ["repo_list", "active_list", "left_list_widget", "right_list_widget", "repo_preview_list", "active_preview_list", "edit_preview_list", "groups_preview_list"]:
-                    target_list = l
-                    break
-        if target_list is None: return
-        target_list.clear()
-        
-        from src.models.groups import load_all_groups_data
-        from src.views.group_card import GroupCard
-        all_groups = load_all_groups_data()
-        for group_name, sights_list in all_groups.items():
-            card = GroupCard(group_name, sights_list, self)
-            card.edit_requested.connect(self.on_edit_group_clicked)
-            card.delete_requested.connect(self.on_delete_group_clicked)
-            card.expanded_toggled.connect(self.on_group_expanded_toggled)
-            
-            item = QListWidgetItem(target_list)
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            from PyQt6.QtCore import QSize
-            item.setSizeHint(QSize(target_list.width(), 75)) 
-            target_list.addItem(item)
-            target_list.setItemWidget(item, card)
 
     def update_gallery_on_group_click(self, active_card):
         if hasattr(self, 'widget_edit_panel') and self.widget_edit_panel.isVisible():
@@ -311,7 +299,7 @@ class MainWindow(QMainWindow):
             name = sight["file_name"]
             if name in active_files_in_game:
                 sight["is_activated"] = True
-                img_marker = "  [🖼️]" if sight.get("has_images", False) else ""
+                img_marker = "  [pic]" if sight.get("has_images", False) else ""
                 item = QListWidgetItem(f"🟢 {name}{img_marker}")
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 self.active_list.addItem(item)
@@ -374,7 +362,7 @@ class MainWindow(QMainWindow):
             box_layout.setContentsMargins(10, 15, 10, 15)
             box_layout.setSpacing(12)
             
-            title_lbl = QLabel(f"📄 {sight_data['file_name']}")
+            title_lbl = QLabel(f"⚪ {sight_data['file_name']}")
             title_lbl.setStyleSheet("font-weight: bold; color: #007ACC; font-size: 11px; border: none; background: transparent;")
             box_layout.addWidget(title_lbl)
             
@@ -390,11 +378,8 @@ class MainWindow(QMainWindow):
                     full_file_path = os.path.join(images_dir, "full.png")
                     
                     if os.path.exists(preview_file_path):
-                        # ЖЕЛЕЗНЫЙ ФИКС: Передаем прямое 'self' вместо self.window() или get_asset_path!
-                        # В этой точке self — это 100% наше главное окно со всеми переменными!
                         img_label = HoverLabel(full_file_path, self)
                         
-                        # Отрисовка маленького превью на витрину водопада
                         pixmap = QPixmap(preview_file_path)
                         if not pixmap.isNull():
                             target_width = 260
@@ -430,12 +415,17 @@ class MainWindow(QMainWindow):
             target_preview_list.addItem(gallery_item)
             target_preview_list.setItemWidget(gallery_item, container_widget)
 
+    def select_all_sights_in_activated(self):
+            if hasattr(self, 'active_list'): self.active_list.selectAll()
 
     def select_all_sights(self):
         if hasattr(self, 'repo_list'): self.repo_list.selectAll()
 
     def clear_sights_selection(self):
         if hasattr(self, 'repo_list'): self.repo_list.clearSelection()
+
+    def clear_sights_selection_in_active(self):
+            if hasattr(self, 'active_list'): self.active_list.clearSelection()
 
     def filter_repository(self):
         if not hasattr(self, 'repo_list'): return
@@ -652,14 +642,14 @@ class MainWindow(QMainWindow):
 
         for sight in all_sights:
             name = sight["file_name"]
-            img_marker = "  [🖼️]" if sight.get("has_images", False) else ""
+            img_marker = "  [pic]" if sight.get("has_images", False) else ""
             if name in current_group_sights:
-                item = QListWidgetItem(f"📄  {name}{img_marker}")
+                item = QListWidgetItem(f"⚪  {name}{img_marker}")
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 self.right_list_widget.addItem(item)
             else:
                 if hide_other_grouped and sight["in_group"]: continue
-                item = QListWidgetItem(f"📄  {name}{img_marker}")
+                item = QListWidgetItem(f"⚪  {name}{img_marker}")
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 self.left_list_widget.addItem(item)
                 
@@ -777,11 +767,110 @@ class MainWindow(QMainWindow):
                 "Import completed successfully", 
                 f"New sights have been successfully added to the Storage: {imported_count}"
             )
+    
+    def open_universal_context_menu(self, position):
+        sender_list = self.sender()
+        if not sender_list: return
+        
+        clicked_item = sender_list.itemAt(position)
+        if not clicked_item: return
+        
+        already_selected_items = sender_list.selectedItems()
+        
+        if clicked_item not in already_selected_items:
+            sender_list.setCurrentItem(clicked_item)
+            clicked_item.setSelected(True)
+            already_selected_items = [clicked_item]
+        
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background-color: #1A1A1A; color: white; border: 1px solid #333333; padding: 4px; }
+            QMenu::item { padding: 6px 24px; }
+            QMenu::item:selected { background-color: #007ACC; }
+        """)
+        
+        list_name = sender_list.objectName()
+        
+        act_action = menu.addAction("🟢 Activate Selected")
+        deact_action = menu.addAction("⚪ Deactivate Selected")
+        del_text = "🔴 Delete from Storage" if list_name == 'repo_list' else "🔴 Delete completely"
+        del_action = menu.addAction(del_text)
+            
+        action = menu.exec(sender_list.mapToGlobal(position))
+        if not action: return
+        
+        if action == act_action:
+            if hasattr(self, 'activate_selected_sights'): 
+                self.activate_selected_sights()
+                
+        elif action == deact_action:
+            if list_name == 'repo_list':
+                game_path = self.input_game_path.text().strip() if hasattr(self, 'input_game_path') else ""
+                if game_path:
+                    from src.models.game_sync import remove_sight_link_from_game
+                    deactivated_count = 0
+                    
+                    for item in already_selected_items:
+                        sight_name = item.data(Qt.ItemDataRole.UserRole)
+                        if sight_name:
+                            if remove_sight_link_from_game(sight_name, game_path):
+                                deactivated_count += 1
+                                
+                    if deactivated_count > 0:
+                        self.refresh_all_apps_data()
+            else:
+                if hasattr(self, 'deactivate_selected_sights'): 
+                    self.deactivate_selected_sights()
+                    
+        elif action == del_action:
+            if not already_selected_items: return
+            
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Confirm delete")
+            msg_box.setText(f"Delete selected sights ({len(already_selected_items)} pcs)?\nThis will also remove their links from the game.")
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            
+            delete_btn = msg_box.addButton("Delete", QMessageBox.ButtonRole.AcceptRole)
+            cancel_btn = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == delete_btn:
+                game_path = self.input_game_path.text().strip() if hasattr(self, 'input_game_path') else ""
+                from src.models.game_sync import remove_sight_link_from_game
+                
+                for item in already_selected_items:
+                    sight_name = item.data(Qt.ItemDataRole.UserRole)
+                    if not sight_name: continue
+                    
+                    if game_path and os.path.exists(game_path):
+                        remove_sight_link_from_game(sight_name, game_path)
+                    
+                    sights_cache = getattr(self, 'sights_cache_memory', [])
+                    sight_data = next((s for s in sights_cache if s["file_name"] == sight_name), None)
+                    
+                    if sight_data and os.path.exists(sight_data["full_path"]):
+                        try:
+                            os.remove(sight_data["full_path"])
+                        except Exception as e:
+                            print(f"Error file delete {sight_name}: {e}")
+                            
+                    sight_name_no_ext = os.path.splitext(sight_name)[0].strip()
+                    images_dir = os.path.join("data", "SightsImages", sight_name_no_ext)
+                    if os.path.exists(images_dir) and os.path.isdir(images_dir):
+                        try:
+                            import shutil
+                            shutil.rmtree(images_dir)
+                        except:
+                            pass
+                            
+                self.refresh_all_apps_data()
+    
 
 class HoverLabel(QLabel):
     def __init__(self, full_size_path, main_win):
         super().__init__()
-        self.full_size_path = full_size_path  # Чистый внешний путь к full.png
+        self.full_size_path = full_size_path
         self.main_win = main_win
         self.setStyleSheet("background: transparent; border: none; border-radius: 4px;")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -789,9 +878,7 @@ class HoverLabel(QLabel):
     def enterEvent(self, event):
         super().enterEvent(event)
             
-            # Теперь, когда класс лежит ниже MainWindow, проверка намертво увидит hover_zoom_label!
         if not self.main_win or not hasattr(self.main_win, 'hover_zoom_label'): 
-            print("⚠️ [ЛУПА]: Критическая ошибка: hover_zoom_label не найден в главном окне!")
             return
             
         absolute_full_path = os.path.abspath(self.full_size_path)
