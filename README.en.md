@@ -5,7 +5,7 @@ This program was created to make it easier to store a large number of custom sig
 
 ### Installation Instructions:
 
-1. Download the latest version of the program from the link: [https://github.com.](https://github.com/ReDegenerator/WarThunder-Sights-Manager/releases.)
+1. Download the latest version of the program from the link:  https://github.com/ReDegenerator/WarThunder-Sights-Manager/releases
 2. Download the `.exe` file, create a separate folder for it, and move the file there before the first launch. After running the program, this folder will store user files (sights, sight previews, group files, program config, and cache).
 3. Now, inside the program, you can select the path to the game's sight folder. Currently (as of 2026-08-29), the path is: `C:\Users\[username]\Documents\My Games\WarThunder\Saves\ [many digits] \production\UserSights\all_tanks` (Be sure to select **all_tanks**).
 
