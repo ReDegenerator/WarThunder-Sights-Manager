@@ -3,6 +3,14 @@
 
 This program was created to make it easier to store a large number of custom sights. Due to the game's loading mechanics, having a huge number of sights (I have 3600+ pcs.) causes severe FPS drops in the sight selection menu. This program acts as a bridge: all your sights are stored inside the application, and only the ones you select will be copied into the game directory.
 
+### WarThunder Sight Packs
+
+[No NSFW Pack](https://drive.google.com/file/d/16VhPD_EpzJRZqnmbGfScjCLQY7iFinOb/view?usp=sharing)
+
+[Only NSFW Pack](https://drive.google.com/file/d/1pcwEDqzmXvISur4b0Z_9mbr3t2fKSs2Y/view?usp=sharing)
+
+*“I do not claim authorship of any sights; all sights in these packs are simply my own repository. If your sights are not included here, it does not mean I consider them bad.”*
+
 ### Installation Instructions:
 
 1. Download the latest version of the program from the link:  https://github.com/ReDegenerator/WarThunder-Sights-Manager/releases
