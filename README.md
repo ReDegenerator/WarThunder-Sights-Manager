@@ -1,4 +1,4 @@
-# WarThunder Sights Manager
+# WarThunder Sights Manager !!!Разработка остановлена из-за решения проблемы внутри игры!!!
 
 [English version here / Английская версия здесь](./README.en.md)
 
