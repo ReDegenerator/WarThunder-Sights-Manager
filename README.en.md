@@ -1,4 +1,4 @@
-# WarThunder Sights Manager
+# WarThunder Sights Manager !!!Development has been halted due to a problem within the game!!!
 [Русская версия здесь / Russian version here](./README.md)
 
 This program was created to make it easier to store a large number of custom sights. Due to the game's loading mechanics, having a huge number of sights (I have 3600+ pcs.) causes severe FPS drops in the sight selection menu. This program acts as a bridge: all your sights are stored inside the application, and only the ones you select will be copied into the game directory.
